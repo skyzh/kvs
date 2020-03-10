@@ -1,4 +1,6 @@
 .DS_Store
-
 /target
 **/*.rs.bk
+.idea/
+database.db
+database.test/
