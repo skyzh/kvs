@@ -139,11 +139,14 @@ impl KvStore {
     /// set the corresponding `key` to `value`
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let offset = self.writer.bytes_written();
+        let do_compaction = self.keydir.contains_key(&key);
         self.keydir
             .insert(key.clone(), (self.generation_cnt, offset));
         serde_json::to_writer(&mut self.writer, &Command::Set { key, value })?;
 
-        self.try_compaction()?;
+        if do_compaction {
+            self.try_compaction()?
+        };
 
         Ok(())
     }
@@ -379,8 +382,10 @@ mod tests {
     fn auto_compaction() {
         setup();
         let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
-        for i in 0..10000 {
-            backend.set(i.to_string(), i.to_string()).unwrap();
+        for j in 0..10 {
+            for i in 0..1000 {
+                backend.set(i.to_string(), j.to_string()).unwrap();
+            }
         }
         assert_ne!(backend.generation_cnt, 0);
     }
