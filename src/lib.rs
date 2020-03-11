@@ -15,10 +15,13 @@ pub type Result<T> = std::result::Result<T, KvStoreError>;
 
 /// KvStore struct stores key-value information
 pub struct KvStore {
+    path: PathBuf,
     writer: SequentialWriter<File>,
     keydir: HashMap<String, (u64, u64)>,
     files: HashMap<u64, File>,
     generation_cnt: u64,
+    compaction_cnt: u64,
+    compaction_in_progress: bool
 }
 
 struct SequentialWriter<T: std::io::Write> {
@@ -40,6 +43,10 @@ impl<T: std::io::Write> SequentialWriter<T> {
 
     pub fn get_mut(&mut self) -> &mut BufWriter<T> {
         &mut self.writer
+    }
+
+    pub fn into_inner(self) -> BufWriter<T> {
+        self.writer
     }
 }
 
@@ -113,10 +120,13 @@ impl KvStore {
             .read(true)
             .open(new_generation_path)?;
         Ok(Self {
+            path,
             writer: SequentialWriter::new(BufWriter::new(file), 0),
             keydir,
             files,
             generation_cnt,
+            compaction_cnt: 0,
+            compaction_in_progress: false
         })
     }
 
@@ -125,6 +135,9 @@ impl KvStore {
         let offset = self.writer.bytes_written();
         self.keydir.insert(key.clone(), (self.generation_cnt, offset));
         serde_json::to_writer(&mut self.writer, &Command::Set { key, value })?;
+
+        self.try_compaction()?;
+
         Ok(())
     }
 
@@ -165,10 +178,73 @@ impl KvStore {
         }
         self.keydir.remove(&key);
         serde_json::to_writer(&mut self.writer, &Command::Remove { key })?;
+
+        self.try_compaction()?;
+
+        Ok(())
+    }
+
+    /// try compact log
+    fn try_compaction(&mut self) -> Result<()> {
+        self.compaction_cnt += 1;
+        if self.compaction_cnt >= 5000 {
+            self.compaction_cnt = 0;
+            self.compaction()?;
+        }
+        Ok(())
+    }
+
+    /// compact log
+    ///
+    /// If crash, you should immediately drop KvStore object.
+    fn compaction(&mut self) -> Result<()> {
+        if self.compaction_in_progress { return Ok(()); }
+        self.compaction_in_progress = true;
+
+        // phase 1: write all logs into next generation
+        // phase 2: remove all files before current generation
+        // phase 3: update all internal structures
+
+        // cache all generations
+        let generations = Self::all_generations(&self.path)?;
+
+        // open new generation
+        let mut new_generation_path = self.path.clone();
+        self.generation_cnt += 1;
+        new_generation_path.push(format!("{}.db", self.generation_cnt));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(new_generation_path)?;
+
+        let new_writer = SequentialWriter::new(BufWriter::new(file), 0);
+        let previous_writer = std::mem::replace(&mut self.writer, new_writer);
+        let file = previous_writer.into_inner().into_inner()
+            .map_err(|_| KvStoreError::IntoInner {})?;
+        self.files.insert(self.generation_cnt - 1, file);
+
+        // get all keys
+        let keys: Vec<String> = self.keydir.keys().map(|x| x.clone()).collect();
+
+        // write to new log
+        for key in keys.into_iter() {
+            let value = self.get(key.clone())?.ok_or(KvStoreError::KeyNotFound { key: key.clone() })?;
+            self.set(key, value)?;
+        }
+
+        // remove all files before current generation
+        for g_cnt in generations {
+            self.files.remove(&g_cnt);
+            let mut path = self.path.clone();
+            path.push(format!("{}.db", g_cnt));
+            std::fs::remove_file(path)?;
+        }
+        self.compaction_in_progress = false;
+
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -267,5 +343,28 @@ mod tests {
         let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
         backend.set("2333".into(), "2333".into()).unwrap();
         assert_eq!(backend.get("2333".into()).unwrap(), Some("2333".into()))
+    }
+
+    #[test]
+    fn compaction() {
+        setup();
+        let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
+        backend.set("2333".into(), "2333".into()).unwrap();
+        backend.set("2333".into(), "2334".into()).unwrap();
+        backend.compaction().unwrap();
+        assert_eq!(backend.generation_cnt, 1);
+        let mut x = PathBuf::from(DB_FILE);
+        x.push(PathBuf::from("0.db"));
+        assert!(!x.exists());
+    }
+
+    #[test]
+    fn auto_compaction() {
+        setup();
+        let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
+        for i in 0..10000 {
+            backend.set(i.to_string(), i.to_string()).unwrap();
+        }
+        assert_ne!(backend.generation_cnt, 0);
     }
 }

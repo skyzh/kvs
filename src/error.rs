@@ -15,6 +15,8 @@ pub enum KvStoreError {
     CliUnknownCommand {},
     #[fail(display = "internal error: invalid file handler")]
     InvalidFileHandler {},
+    #[fail(display = "internal error: failed to acquire file")]
+    IntoInner {},
     #[fail(display = "{}", _0)]
     IOError(#[fail(cause)] std::io::Error),
     #[fail(display = "{}", _0)]
