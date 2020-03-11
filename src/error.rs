@@ -3,10 +3,11 @@ use failure::Fail;
 #[derive(Debug, Fail)]
 pub enum KvStoreError {
     #[fail(display = "key not found: {}", key)]
-    KeyNotFound {
-        key: String
-    },
-    #[fail(display = "parameter not found: {}, required by command {}", parameter, required_by)]
+    KeyNotFound { key: String },
+    #[fail(
+        display = "parameter not found: {}, required by command {}",
+        parameter, required_by
+    )]
     CliError {
         parameter: String,
         required_by: String,

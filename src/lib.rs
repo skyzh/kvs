@@ -1,15 +1,15 @@
 //! defines KvStore struct which implements a simple in-memory key-value storage
 
-mod log;
 pub mod error;
+mod log;
 
-use std::path::PathBuf;
-use std::fs::File;
-use std::io::{BufWriter, BufReader, Seek, SeekFrom, Write};
-use crate::log::Command;
-use std::collections::HashMap;
-use serde::Deserialize;
 use crate::error::KvStoreError;
+use crate::log::Command;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
 pub type Result<T> = std::result::Result<T, KvStoreError>;
 
@@ -21,7 +21,7 @@ pub struct KvStore {
     files: HashMap<u64, File>,
     generation_cnt: u64,
     compaction_cnt: u64,
-    compaction_in_progress: bool
+    compaction_in_progress: bool,
 }
 
 struct SequentialWriter<T: std::io::Write> {
@@ -68,10 +68,12 @@ impl KvStore {
         let mut ids = std::fs::read_dir(&path)?
             .flat_map(|f| -> Result<_> { Ok(f?.path()) })
             .filter(|f| f.is_file() && f.extension().map_or(false, |x| x == "db"))
-            .flat_map(|f| f.file_name()
-                .and_then(|x| x.to_str())
-                .map(|x| &x[0..x.len() - 3])
-                .map(|x| x.parse::<u64>()))
+            .flat_map(|f| {
+                f.file_name()
+                    .and_then(|x| x.to_str())
+                    .map(|x| &x[0..x.len() - 3])
+                    .map(|x| x.parse::<u64>())
+            })
             .flatten()
             .collect::<Vec<u64>>();
         ids.sort();
@@ -90,19 +92,23 @@ impl KvStore {
                 let mut path = path.clone();
                 path.push(format!("{}.db", generation));
                 let mut reader = BufReader::new(File::open(path)?);
-                let mut de = serde_json::Deserializer::from_reader(&mut reader)
-                    .into_iter::<Command>();
+                let mut de =
+                    serde_json::Deserializer::from_reader(&mut reader).into_iter::<Command>();
                 loop {
                     let offset = de.byte_offset();
                     match de.next() {
                         Some(result) => match result {
                             Ok(cmd) => match cmd {
-                                Command::Set { key, value: _ } => { keydir.insert(key, (generation, offset as u64)); }
-                                Command::Remove { key } => { keydir.remove(&key); }
+                                Command::Set { key, .. } => {
+                                    keydir.insert(key, (generation, offset as u64));
+                                }
+                                Command::Remove { key } => {
+                                    keydir.remove(&key);
+                                }
                             },
-                            Err(_x) => break
+                            Err(_x) => break,
                         },
-                        None => break
+                        None => break,
                     };
                 }
                 files.insert(generation, reader.into_inner());
@@ -126,14 +132,15 @@ impl KvStore {
             files,
             generation_cnt,
             compaction_cnt: 0,
-            compaction_in_progress: false
+            compaction_in_progress: false,
         })
     }
 
     /// set the corresponding `key` to `value`
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let offset = self.writer.bytes_written();
-        self.keydir.insert(key.clone(), (self.generation_cnt, offset));
+        self.keydir
+            .insert(key.clone(), (self.generation_cnt, offset));
         serde_json::to_writer(&mut self.writer, &Command::Set { key, value })?;
 
         self.try_compaction()?;
@@ -146,7 +153,9 @@ impl KvStore {
             self.writer.flush()?;
             Ok(self.writer.get_mut().get_mut())
         } else {
-            self.files.get_mut(&fileno).ok_or(KvStoreError::InvalidFileHandler {}.into())
+            self.files
+                .get_mut(&fileno)
+                .ok_or_else(|| KvStoreError::InvalidFileHandler {})
         }
     }
 
@@ -162,10 +171,12 @@ impl KvStore {
         let offset = *offset;
         let mut file = self.get_file(fileno)?.try_clone()?;
         file.seek(SeekFrom::Start(offset))?;
-        let cmd = Command::deserialize(&mut serde_json::Deserializer::from_reader(BufReader::new(file)))?;
+        let cmd = Command::deserialize(&mut serde_json::Deserializer::from_reader(
+            BufReader::new(file),
+        ))?;
         match cmd {
-            Command::Set { key: _, value } => Ok(Some(value)),
-            Command::Remove { key: _ } => panic!("invalid record")
+            Command::Set { value, .. } => Ok(Some(value)),
+            Command::Remove { .. } => panic!("invalid record"),
         }
     }
 
@@ -174,7 +185,7 @@ impl KvStore {
     /// If the key doesn't exist in memory, this function will panic
     pub fn remove(&mut self, key: String) -> Result<()> {
         if !self.keydir.contains_key(&key) {
-            return Err(KvStoreError::KeyNotFound { key }.into());
+            return Err(KvStoreError::KeyNotFound { key });
         }
         self.keydir.remove(&key);
         serde_json::to_writer(&mut self.writer, &Command::Remove { key })?;
@@ -198,7 +209,9 @@ impl KvStore {
     ///
     /// If crash, you should immediately drop KvStore object.
     fn compaction(&mut self) -> Result<()> {
-        if self.compaction_in_progress { return Ok(()); }
+        if self.compaction_in_progress {
+            return Ok(());
+        }
         self.compaction_in_progress = true;
 
         // phase 1: write all logs into next generation
@@ -220,16 +233,20 @@ impl KvStore {
 
         let new_writer = SequentialWriter::new(BufWriter::new(file), 0);
         let previous_writer = std::mem::replace(&mut self.writer, new_writer);
-        let file = previous_writer.into_inner().into_inner()
+        let file = previous_writer
+            .into_inner()
+            .into_inner()
             .map_err(|_| KvStoreError::IntoInner {})?;
         self.files.insert(self.generation_cnt - 1, file);
 
         // get all keys
-        let keys: Vec<String> = self.keydir.keys().map(|x| x.clone()).collect();
+        let keys: Vec<String> = self.keydir.keys().cloned().collect();
 
         // write to new log
         for key in keys.into_iter() {
-            let value = self.get(key.clone())?.ok_or(KvStoreError::KeyNotFound { key: key.clone() })?;
+            let value = self
+                .get(key.clone())?
+                .ok_or(KvStoreError::KeyNotFound { key: key.clone() })?;
             self.set(key, value)?;
         }
 
@@ -254,7 +271,7 @@ mod tests {
     const DB_FILE: &str = "./database.test";
 
     fn setup() {
-        std::fs::remove_dir_all(DB_FILE).unwrap();
+        std::fs::remove_dir_all(DB_FILE).ok();
     }
 
     #[test]

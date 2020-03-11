@@ -1,6 +1,6 @@
 //! defines logging
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Command
 #[derive(Serialize, Deserialize, Debug)]
