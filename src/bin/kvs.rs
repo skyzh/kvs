@@ -1,6 +1,7 @@
 use clap::clap_app;
+use kvs::KvStore;
 
-fn main() -> Result<(), &'static str> {
+fn main() -> Result<(), failure::Error> {
     let matches = clap_app!(kvs =>
         (version: "0.1.0")
         (author: "Alex Chi <iskyzh@gmail.com>")
@@ -21,22 +22,26 @@ fn main() -> Result<(), &'static str> {
     )
     .get_matches();
 
+    let mut kvstore = KvStore::open(std::env::current_dir())?;
     match matches.subcommand_name() {
         Some("set") => {
-            eprintln!("unimplemented");
-            Err("unimplemented")
+            let key = matches.value_of("key")?;
+            let value = matches.value_of("value")?;
+            kvstore.set(key.to_string(), value.to_string())?;
         }
         Some("get") => {
-            eprintln!("unimplemented");
-            Err("unimplemented")
+            let key = matches.value_of("key")?;
+            let value = kvstore.get(key.to_string())??;
+            println!("{}", value);
         }
         Some("rm") => {
-            eprintln!("unimplemented");
-            Err("unimplemented")
+            let key = matches.value_of("key")?;
+            kvstore.remove(key.to_string());
         }
         _ => {
             eprintln!("unknown command");
-            Err("unknown command")
+            return failure::Error();
         }
     }
+    Ok(())
 }
