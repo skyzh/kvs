@@ -1,5 +1,6 @@
 use clap::clap_app;
 use kvs::KvStore;
+use kvs::error::KvStoreError;
 
 fn main() -> Result<(), failure::Error> {
     let matches = clap_app!(kvs =>
@@ -20,27 +21,54 @@ fn main() -> Result<(), failure::Error> {
             (@arg KEY: +required "key")
         )
     )
-    .get_matches();
+        .get_matches();
 
-    let mut kvstore = KvStore::open(std::env::current_dir())?;
-    match matches.subcommand_name() {
-        Some("set") => {
-            let key = matches.value_of("key")?;
-            let value = matches.value_of("value")?;
-            kvstore.set(key.to_string(), value.to_string())?;
+    let mut kvstore = KvStore::open(std::env::current_dir()?)?;
+    match matches.subcommand() {
+        ("set", Some(cmd)) => {
+            let key = cmd.value_of("KEY")
+                .ok_or(KvStoreError::CliError {
+                    parameter: "key".into(),
+                    required_by: "set".into(),
+                })?;
+            let value = cmd.value_of("VALUE")
+                .ok_or(KvStoreError::CliError {
+                    parameter: "value".into(),
+                    required_by: "set".into(),
+                })?;
+            kvstore.set(key.into(), value.into())?;
         }
-        Some("get") => {
-            let key = matches.value_of("key")?;
-            let value = kvstore.get(key.to_string())??;
-            println!("{}", value);
+        ("get", Some(cmd)) => {
+            let key = cmd.value_of("KEY")
+                .ok_or(KvStoreError::CliError {
+                    parameter: "KEY".into(),
+                    required_by: "get".into(),
+                })?;
+            let value = kvstore.get(key.into())?;
+            match value {
+                Some(ref x) => { println!("{}", x); }
+                None => { // return Err(KvStoreError::KeyNotFound { key: key.into() }.into());
+                    println!("Key not found");
+                }
+            };
         }
-        Some("rm") => {
-            let key = matches.value_of("key")?;
-            kvstore.remove(key.to_string());
+        ("rm", Some(cmd)) => {
+            let key = cmd.value_of("KEY")
+                .ok_or(KvStoreError::CliError {
+                    parameter: "key".into(),
+                    required_by: "rm".into(),
+                })?;
+            kvstore.remove(key.into()).map_err(|e| {
+                match e {
+                    KvStoreError::KeyNotFound { key: _ } => println!("Key not found"),
+                    _ => {}
+                }
+                return e;
+            })?;
         }
         _ => {
             eprintln!("unknown command");
-            return failure::Error();
+            return Err(KvStoreError::CliUnknownCommand {}.into());
         }
     }
     Ok(())

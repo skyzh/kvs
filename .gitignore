@@ -4,3 +4,4 @@
 .idea/
 database.db
 database.test/
+*.db

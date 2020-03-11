@@ -1,20 +1,20 @@
 //! defines KvStore struct which implements a simple in-memory key-value storage
+
 mod log;
-mod error;
+pub mod error;
 
 use std::path::PathBuf;
 use std::fs::File;
-use std::io::{BufWriter, BufReader, Seek, SeekFrom};
+use std::io::{BufWriter, BufReader, Seek, SeekFrom, Write};
 use crate::log::Command;
 use std::collections::HashMap;
-use failure::Error;
 use serde::Deserialize;
+use crate::error::KvStoreError;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, KvStoreError>;
 
 /// KvStore struct stores key-value information
 pub struct KvStore {
-    path: PathBuf,
     writer: SequentialWriter<File>,
     keydir: HashMap<String, (u64, u64)>,
     files: HashMap<u64, File>,
@@ -60,9 +60,10 @@ impl KvStore {
     fn all_generations(path: &PathBuf) -> Result<Vec<u64>> {
         let mut ids = std::fs::read_dir(&path)?
             .flat_map(|f| -> Result<_> { Ok(f?.path()) })
-            .filter(|f| f.is_file()) // && f.extension().map_or(false, |x| x == "db"))
+            .filter(|f| f.is_file() && f.extension().map_or(false, |x| x == "db"))
             .flat_map(|f| f.file_name()
                 .and_then(|x| x.to_str())
+                .map(|x| &x[0..x.len() - 3])
                 .map(|x| x.parse::<u64>()))
             .flatten()
             .collect::<Vec<u64>>();
@@ -80,7 +81,7 @@ impl KvStore {
             generation_cnt = generations.last().map_or(0, |x| *x) + 1;
             for generation in generations {
                 let mut path = path.clone();
-                path.push(generation.to_string());
+                path.push(format!("{}.db", generation));
                 let mut reader = BufReader::new(File::open(path)?);
                 let mut de = serde_json::Deserializer::from_reader(&mut reader)
                     .into_iter::<Command>();
@@ -89,10 +90,10 @@ impl KvStore {
                     match de.next() {
                         Some(result) => match result {
                             Ok(cmd) => match cmd {
-                                Command::Set { key, value } => { keydir.insert(key, (generation, offset as u64)); }
+                                Command::Set { key, value: _ } => { keydir.insert(key, (generation, offset as u64)); }
                                 Command::Remove { key } => { keydir.remove(&key); }
                             },
-                            Err(x) => break
+                            Err(_x) => break
                         },
                         None => break
                     };
@@ -105,10 +106,13 @@ impl KvStore {
         }
 
         let mut new_generation_path = path.clone();
-        new_generation_path.push(generation_cnt.to_string());
-        let file = File::create(new_generation_path)?;
+        new_generation_path.push(format!("{}.db", generation_cnt));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(new_generation_path)?;
         Ok(Self {
-            path,
             writer: SequentialWriter::new(BufWriter::new(file), 0),
             keydir,
             files,
@@ -124,11 +128,12 @@ impl KvStore {
         Ok(())
     }
 
-    fn get_file(&mut self, fileno: u64) -> Option<&mut File> {
+    fn get_file(&mut self, fileno: u64) -> Result<&mut File> {
         if fileno == self.generation_cnt {
-            Some(self.writer.get_mut().get_mut())
+            self.writer.flush()?;
+            Ok(self.writer.get_mut().get_mut())
         } else {
-            self.files.get_mut(&fileno)
+            self.files.get_mut(&fileno).ok_or(KvStoreError::InvalidFileHandler {}.into())
         }
     }
 
@@ -142,12 +147,12 @@ impl KvStore {
         let (fileno, offset) = self.keydir.get(&key).unwrap();
         let fileno = *fileno;
         let offset = *offset;
-        let file = self.get_file(fileno).unwrap();
-        file.seek(SeekFrom::Start(offset));
+        let mut file = self.get_file(fileno)?.try_clone()?;
+        file.seek(SeekFrom::Start(offset))?;
         let cmd = Command::deserialize(&mut serde_json::Deserializer::from_reader(BufReader::new(file)))?;
         match cmd {
-            Command::Set { key, value } => Ok(Some(value)),
-            Command::Remove { key } => panic!("233")
+            Command::Set { key: _, value } => Ok(Some(value)),
+            Command::Remove { key: _ } => panic!("invalid record")
         }
     }
 
@@ -156,7 +161,7 @@ impl KvStore {
     /// If the key doesn't exist in memory, this function will panic
     pub fn remove(&mut self, key: String) -> Result<()> {
         if !self.keydir.contains_key(&key) {
-            panic!("")
+            return Err(KvStoreError::KeyNotFound { key }.into());
         }
         self.keydir.remove(&key);
         serde_json::to_writer(&mut self.writer, &Command::Remove { key })?;
@@ -173,7 +178,7 @@ mod tests {
     const DB_FILE: &str = "./database.test";
 
     fn setup() {
-        std::fs::remove_dir_all(DB_FILE);
+        std::fs::remove_dir_all(DB_FILE).unwrap();
     }
 
     #[test]
@@ -208,7 +213,7 @@ mod tests {
     #[test]
     fn write_log_multiple_generation() {
         setup();
-        for j in 0..10 {
+        for _j in 0..10 {
             let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
             for i in 0..100 {
                 backend.set(i.to_string(), "233".to_string()).unwrap();
@@ -247,5 +252,20 @@ mod tests {
             assert!(backend.keydir.contains_key(&i.to_string()));
             assert_eq!(backend.get(i.to_string()).unwrap(), Some("9".to_string()))
         }
+    }
+
+    #[test]
+    fn get_nonexist_key() {
+        setup();
+        let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
+        assert_eq!(backend.get("2333".into()).unwrap(), None)
+    }
+
+    #[test]
+    fn get_current_key() {
+        setup();
+        let mut backend = KvStore::open(PathBuf::from(DB_FILE)).unwrap();
+        backend.set("2333".into(), "2333".into()).unwrap();
+        assert_eq!(backend.get("2333".into()).unwrap(), Some("2333".into()))
     }
 }
