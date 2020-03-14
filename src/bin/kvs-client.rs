@@ -1,12 +1,11 @@
 use clap::clap_app;
 use kvs::error::KvStoreError;
-use kvs::{KvStore, KvsEngine};
 
 fn main() -> Result<(), failure::Error> {
-    let matches = clap_app!(kvs =>
+    let matches = clap_app!(kvs_client =>
         (version: "0.1.0")
         (author: "Alex Chi <iskyzh@gmail.com>")
-        (about: "A key-value store")
+        (about: "A key-value store client")
         (@subcommand set =>
             (about: "set key-value pair")
             (@arg KEY: +required "key")
@@ -20,9 +19,11 @@ fn main() -> Result<(), failure::Error> {
             (about: "remove key-value pair by key")
             (@arg KEY: +required "key")
         )
+        (@arg ADDR: --addr +takes_value "addr")
     ).get_matches();
 
-    let mut kvstore = KvStore::open(std::env::current_dir()?)?;
+    let addr = matches.value_of("ADDR").unwrap_or("127.0.0.1:4000");
+
     match matches.subcommand() {
         ("set", Some(cmd)) => {
             let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
@@ -33,34 +34,17 @@ fn main() -> Result<(), failure::Error> {
                 parameter: "value".into(),
                 required_by: "set".into(),
             })?;
-            kvstore.set(key.into(), value.into())?;
         }
         ("get", Some(cmd)) => {
             let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
                 parameter: "KEY".into(),
                 required_by: "get".into(),
             })?;
-            let value = kvstore.get(key.into())?;
-            match value {
-                Some(ref x) => {
-                    println!("{}", x);
-                }
-                None => {
-                    // return Err(KvStoreError::KeyNotFound { key: key.into() }.into());
-                    println!("Key not found");
-                }
-            };
         }
         ("rm", Some(cmd)) => {
             let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
                 parameter: "key".into(),
                 required_by: "rm".into(),
-            })?;
-            kvstore.remove(key.into()).map_err(|e| {
-                if let KvStoreError::KeyNotFound { .. } = e {
-                    println!("Key not found")
-                }
-                e
             })?;
         }
         _ => {
