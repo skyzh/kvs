@@ -4,8 +4,8 @@ use kvs::{KvStore, KvsEngine};
 
 fn main() -> Result<(), failure::Error> {
     let matches = clap_app!(kvs =>
-        (version: "0.1.0")
-        (author: "Alex Chi <iskyzh@gmail.com>")
+        (version: env!("CARGO_PKG_VERSION"))
+        (author: env!("CARGO_PKG_AUTHORS"))
         (about: "A key-value store")
         (@subcommand set =>
             (about: "set key-value pair")

@@ -243,6 +243,8 @@ impl KvsEngine for KvStore {
 
         self.try_compaction()?;
 
+        self.writer.flush()?;
+
         Ok(())
     }
     /// set the corresponding `key` to `value`
@@ -256,6 +258,8 @@ impl KvsEngine for KvStore {
         if do_compaction {
             self.try_compaction()?
         };
+
+        self.writer.flush()?;
 
         Ok(())
     }

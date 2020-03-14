@@ -4,9 +4,11 @@ pub mod error;
 mod log;
 mod engine;
 mod store;
+mod command;
 
 pub use engine::KvsEngine;
 pub use store::KvStore;
+pub use command::{CommandRequest, CommandResponse};
 
 use error::KvStoreError;
 

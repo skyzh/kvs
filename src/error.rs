@@ -5,8 +5,8 @@ pub enum KvStoreError {
     #[fail(display = "key not found: {}", key)]
     KeyNotFound { key: String },
     #[fail(
-        display = "parameter not found: {}, required by command {}",
-        parameter, required_by
+    display = "parameter not found: {}, required by command {}",
+    parameter, required_by
     )]
     CliError {
         parameter: String,
@@ -22,6 +22,8 @@ pub enum KvStoreError {
     IOError(#[fail(cause)] std::io::Error),
     #[fail(display = "{}", _0)]
     SerdeError(#[fail(cause)] serde_json::error::Error),
+    #[fail(display = "error from server: {}", reason)]
+    RequestError { reason: String },
 }
 
 impl std::convert::From<std::io::Error> for KvStoreError {
