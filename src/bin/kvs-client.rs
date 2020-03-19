@@ -1,8 +1,8 @@
 use clap::clap_app;
 use kvs::error::KvStoreError;
-use std::net::TcpStream;
-use std::io::{BufWriter, BufReader, Write};
 use kvs::{CommandRequest, CommandResponse};
+use std::io::{BufReader, BufWriter, Write};
+use std::net::TcpStream;
 use std::process::exit;
 
 fn main() -> Result<(), failure::Error> {
@@ -26,8 +26,8 @@ fn main() -> Result<(), failure::Error> {
             (@arg KEY: +required "key")
             (@arg ADDR: --addr +takes_value "addr")
         )
-    ).get_matches();
-
+    )
+    .get_matches();
 
     let command;
     let addr;
@@ -35,32 +35,44 @@ fn main() -> Result<(), failure::Error> {
     {
         match matches.subcommand() {
             ("set", Some(cmd)) => {
-                let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
-                    parameter: "key".into(),
-                    required_by: "set".into(),
-                })?.into();
-                let value = cmd.value_of("VALUE").ok_or(KvStoreError::CliError {
-                    parameter: "value".into(),
-                    required_by: "set".into(),
-                })?.into();
+                let key = cmd
+                    .value_of("KEY")
+                    .ok_or(KvStoreError::CliError {
+                        parameter: "key".into(),
+                        required_by: "set".into(),
+                    })?
+                    .into();
+                let value = cmd
+                    .value_of("VALUE")
+                    .ok_or(KvStoreError::CliError {
+                        parameter: "value".into(),
+                        required_by: "set".into(),
+                    })?
+                    .into();
 
                 addr = cmd.value_of("ADDR").unwrap_or("127.0.0.1:4000");
                 command = CommandRequest::Set { key, value };
             }
             ("get", Some(cmd)) => {
-                let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
-                    parameter: "KEY".into(),
-                    required_by: "get".into(),
-                })?.into();
+                let key = cmd
+                    .value_of("KEY")
+                    .ok_or(KvStoreError::CliError {
+                        parameter: "KEY".into(),
+                        required_by: "get".into(),
+                    })?
+                    .into();
 
                 addr = cmd.value_of("ADDR").unwrap_or("127.0.0.1:4000");
                 command = CommandRequest::Get { key };
             }
             ("rm", Some(cmd)) => {
-                let key = cmd.value_of("KEY").ok_or(KvStoreError::CliError {
-                    parameter: "key".into(),
-                    required_by: "rm".into(),
-                })?.into();
+                let key = cmd
+                    .value_of("KEY")
+                    .ok_or(KvStoreError::CliError {
+                        parameter: "key".into(),
+                        required_by: "rm".into(),
+                    })?
+                    .into();
 
                 addr = cmd.value_of("ADDR").unwrap_or("127.0.0.1:4000");
                 command = CommandRequest::Remove { key };
@@ -75,7 +87,7 @@ fn main() -> Result<(), failure::Error> {
     let mut connection = TcpStream::connect(addr)?;
     let mut writer = BufWriter::new(&mut connection);
     serde_json::to_writer(&mut writer, &command)?;
-    write!(writer, "\n")?;
+    writeln!(writer)?;
     drop(writer);
     let reader = BufReader::new(&mut connection);
 
@@ -85,12 +97,10 @@ fn main() -> Result<(), failure::Error> {
             return Err(KvStoreError::RequestError { reason }.into());
         }
         CommandResponse::Success {} => {}
-        CommandResponse::Value { value } => {
-            match value {
-                Some(value) => println!("{}", value),
-                None => println!("Key not found")
-            }
-        }
+        CommandResponse::Value { value } => match value {
+            Some(value) => println!("{}", value),
+            None => println!("Key not found"),
+        },
         CommandResponse::KeyNotFound { .. } => {
             eprintln!("Key not found");
             exit(1);

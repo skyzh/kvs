@@ -1,9 +1,10 @@
 use clap::clap_app;
 use kvs::error::KvStoreError;
-use kvs::{KvStore, KvsEngine, CommandRequest, CommandResponse};
-use slog::{o, info, Drain};
+use kvs::server::KvsServer;
+use kvs::{KvStore, KvsEngine, SledEngine};
+use slog::{info, o, Drain};
 use std::fs::File;
-use std::io::{Read, Write, BufReader, BufWriter, BufRead};
+use std::io::{Read, Write};
 use std::net::TcpListener;
 
 fn get_current_engine() -> Option<String> {
@@ -11,9 +12,9 @@ fn get_current_engine() -> Option<String> {
     match File::open(".config") {
         Ok(mut file) => match file.read_to_string(&mut current_engine) {
             Ok(_) => Some(current_engine),
-            _ => None
+            _ => None,
         },
-        _ => None
+        _ => None,
     }
 }
 
@@ -24,7 +25,8 @@ fn main() -> Result<(), failure::Error> {
         (about: "A key-value store server")
         (@arg ADDR: --addr +takes_value "addr")
         (@arg ENGINE: --engine +required +takes_value "engine")
-    ).get_matches();
+    )
+    .get_matches();
 
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
@@ -40,10 +42,11 @@ fn main() -> Result<(), failure::Error> {
 
     if let Some(current_engine) = get_current_engine() {
         if engine != current_engine {
-            Err(KvStoreError::CliError {
+            return Err(KvStoreError::CliError {
                 parameter: "engine".into(),
                 required_by: "".into(),
-            })?;
+            }
+            .into());
         }
     }
 
@@ -59,60 +62,23 @@ fn main() -> Result<(), failure::Error> {
         .open(".config")?;
     write!(config_file, "{}", engine)?;
 
-    let mut kvs_engine: Box<dyn KvsEngine>;
+    let kvs_engine: Box<dyn KvsEngine>;
 
     match engine {
-        "sled" => { panic!(""); }
-        "kvs" => { kvs_engine = Box::new(KvStore::open(std::env::current_dir()?)?) }
+        "sled" => kvs_engine = Box::new(SledEngine::open(std::env::current_dir()?)?),
+        "kvs" => kvs_engine = Box::new(KvStore::open(std::env::current_dir()?)?),
         _ => {
             return Err(KvStoreError::CliError {
                 parameter: "engine".into(),
                 required_by: "".into(),
-            }.into());
+            }
+            .into());
         }
     }
 
     let listener = TcpListener::bind(addr)?;
 
-    for connection in listener.incoming() {
-        let mut connection = connection?;
-        info!(log, "new connection"; "peer" => connection.peer_addr()?);
-        let mut reader = BufReader::new(&mut connection);
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        drop(reader);
-        let response = match serde_json::from_str(line.as_str())? {
-            CommandRequest::Get { key } => {
-                info!(log, "client"; "command" => "get" ,"key" => &key);
-                match kvs_engine.get(key) {
-                    Ok(value) => CommandResponse::Value { value },
-                    Err(e) => CommandResponse::Error { reason: format!("{:?}", e).into() }
-                }
-            }
-            CommandRequest::Set { key, value } => {
-                info!(log, "client"; "command" => "set", "key" => &key, "value" => &value);
-                match kvs_engine.set(key, value) {
-                    Ok(_) => CommandResponse::Success {},
-                    Err(e) => CommandResponse::Error { reason: format!("{:?}", e).into() }
-                }
-            }
-            CommandRequest::Remove { key } => {
-                info!(log, "client"; "command" => "rm", "key" => &key);
-                match kvs_engine.remove(key) {
-                    Ok(_) => CommandResponse::Success {},
-                    Err(e) => {
-                        if let KvStoreError::KeyNotFound { .. } = e {
-                            CommandResponse::KeyNotFound {}
-                        } else {
-                            CommandResponse::Error { reason: format!("{:?}", e).into() }
-                        }
-                    }
-                }
-            }
-        };
-        let mut writer = BufWriter::new(connection);
-        serde_json::to_writer(&mut writer, &response)?;
-    }
+    KvsServer::new(listener, kvs_engine).serve(&log)?;
 
     Ok(())
 }

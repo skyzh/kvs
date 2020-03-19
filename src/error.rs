@@ -5,8 +5,8 @@ pub enum KvStoreError {
     #[fail(display = "key not found: {}", key)]
     KeyNotFound { key: String },
     #[fail(
-    display = "parameter not found: {}, required by command {}",
-    parameter, required_by
+        display = "parameter not found: {}, required by command {}",
+        parameter, required_by
     )]
     CliError {
         parameter: String,
@@ -24,6 +24,8 @@ pub enum KvStoreError {
     SerdeError(#[fail(cause)] serde_json::error::Error),
     #[fail(display = "error from server: {}", reason)]
     RequestError { reason: String },
+    #[fail(display = "{}", _0)]
+    SledError(#[fail(cause)] sled::Error),
 }
 
 impl std::convert::From<std::io::Error> for KvStoreError {
@@ -35,5 +37,11 @@ impl std::convert::From<std::io::Error> for KvStoreError {
 impl std::convert::From<serde_json::error::Error> for KvStoreError {
     fn from(err: serde_json::error::Error) -> Self {
         KvStoreError::SerdeError(err)
+    }
+}
+
+impl std::convert::From<sled::Error> for KvStoreError {
+    fn from(err: sled::Error) -> Self {
+        KvStoreError::SledError(err)
     }
 }

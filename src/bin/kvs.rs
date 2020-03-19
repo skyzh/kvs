@@ -20,7 +20,8 @@ fn main() -> Result<(), failure::Error> {
             (about: "remove key-value pair by key")
             (@arg KEY: +required "key")
         )
-    ).get_matches();
+    )
+    .get_matches();
 
     let mut kvstore = KvStore::open(std::env::current_dir()?)?;
     match matches.subcommand() {

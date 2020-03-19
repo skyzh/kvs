@@ -1,11 +1,11 @@
 use crate::error::KvStoreError;
 use crate::log::Command;
+use crate::{KvsEngine, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use crate::{Result, KvsEngine};
 
 /// KvStore struct stores key-value information
 pub struct KvStore {
