@@ -17,8 +17,12 @@ sled = "0.31.0"
 
 [dev-dependencies]
 assert_cmd = "0.11"
-criterion = "0.2.11"
+criterion = "0.3.1"
 predicates = "1.0.0"
 rand = "0.6.5"
 tempfile = "3.0.7"
 walkdir = "2.2.7"
+
+[[bench]]
+name = "kvs_benchmark"
+harness = false
